@@ -137,7 +137,7 @@ subroutine plane_load_json(t)
     type(json_value),pointer :: j_this, j_wing, j_cont, j_afprop, j_afread, json_command
     character(len=:),allocatable :: cval
     character(5) :: side
-    integer :: loc,i,iwing,idummy,keep_reading,nreadwings,iforce,count,icontrol,iairfoil,nairfoils,iaf
+    integer :: loc,i,iwing,nreadwings,iforce,icontrol,iairfoil,nairfoils,iaf
     real :: sweep,dihedral,mount,washout
 
     call json_initialize()
@@ -161,6 +161,10 @@ subroutine plane_load_json(t)
     call myjson_get(t%json,'reference.lateral_length', t%lat_r)
 
     call myjson_get(t%json,'condition.alpha', t%alpha); t%alpha = t%alpha*pi/180.0
+#ifdef dnad
+    ! Always make alpha a design variable so it can be used in the target_CL function
+    t%alpha%dx(1) = 1.0
+#endif
     call myjson_get(t%json,'condition.beta', t%beta, 0.0); t%beta = t%beta*pi/180.0
 
     call myjson_get(t%json,'condition.omega.roll', t%omega(1), 0.0)
@@ -295,6 +299,10 @@ subroutine plane_load_json(t)
 
         call t%json%get('wings.'//trim(j_wing%name)//'.grid',             t%wings(iwing)%nSec); call json_check()
 
+        !Grid clustering parameters
+        call myjson_get(t%json, 'wings.'//trim(j_wing%name)//'.root_clustering', t%wings(iwing)%root_clustering, 1)
+        call myjson_get(t%json, 'wings.'//trim(j_wing%name)//'.tip_clustering', t%wings(iwing)%tip_clustering, 1)
+
         !control surface defs
         call myjson_get(t%json, 'wings.'//trim(j_wing%name)//'.control.span_root', t%wings(iwing)%control_span_root, -1.0)
 !        call t%json%get('wings.'//trim(j_wing%name)//'.control.span_root', t%wings(iwing)%control_span_root);
@@ -376,7 +384,7 @@ subroutine plane_load_airfoil(t,i,prefix,local)
     type(json_file) :: f_json    !the JSON structure read from the file:
     character(len=*) :: prefix
     integer :: local
-    integer :: i,ios
+    integer :: i
     character(100) :: fn,datafilename
     character(len=:),allocatable :: cval
 
@@ -422,8 +430,7 @@ subroutine plane_write_json_file(t,filename)
     type(json_value),pointer    :: p_root, p_plane, p_reference, p_condition, p_wings, p_solver, p_run, p_wingi, p_connect
 
     character(100) :: filename
-    integer :: ios,iwing,iairfoil,i,iunit
-    character(5) :: control_surface,control_sealed,control_symmetric
+    integer :: ios,iwing,iairfoil,iunit
 
     iairfoil = 0
     iwing = 0
@@ -872,9 +879,9 @@ subroutine plane_global_forces(t)
     type(section_t),pointer :: si
     type(json_value),pointer    :: p_root, p_forcetype, p_object
     character(100) :: filename
-    integer :: iwing,isec,i,j,numwings,ierror,iunit
+    integer :: iwing,isec,i,j,numwings,iunit
     real :: vi(3),vec(3),vm(3),ui(3),vmp(3),Rcg(3)
-    real :: test_CL, test_CD, test_CN, test_CA, test_fvec(3), test_mvec(3)
+!    real :: test_CL, test_CD, test_CN, test_CA, test_fvec(3), test_mvec(3)
     120 Format(A15, A5, 100ES25.13)
 
     numwings = t%nrealwings !only sum over real wings, not reflected wings
@@ -1066,6 +1073,7 @@ subroutine plane_distributed_loads(t)
         t%sec(isec)%myp%Load_M(:) = 0.0
     end do
     !tie in external forces to closest structure !this should be same as in subroutine for viewing
+    min_isec = 0
     do iforce = 1,size(t%external_forces)
         do ipoint=1,t%external_forces(iforce)%datasize
             force_pos(:) = t%external_forces(iforce)%RawData(ipoint,1:3)
